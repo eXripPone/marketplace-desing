@@ -1,0 +1,144 @@
+name: flight-hm3
+x-go: &go
+  image: flight-hm3-go:local
+  build: .
+x-sentinel: &sentinel
+  image: redis:7
+  entrypoint: ["sh", "/setup-sentinel.sh"]
+  volumes:
+    - ./redis/setup-sentinel.sh:/setup-sentinel.sh:ro
+  depends_on:
+    redis-master:
+      condition: service_healthy
+    redis-replica:
+      condition: service_healthy
+
+services:
+  flight-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: flights
+      POSTGRES_USER: flight
+      POSTGRES_PASSWORD: flight
+    volumes:
+      - flight_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flight -d flights"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  booking-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: bookings
+      POSTGRES_USER: booking
+      POSTGRES_PASSWORD: booking
+    volumes:
+      - booking_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking -d bookings"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis-master:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--replica-announce-ip", "172.29.83.11"]
+    networks:
+      cache:
+        ipv4_address: 172.29.83.11
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  redis-replica:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--replicaof", "172.29.83.11", "6379", "--replica-announce-ip", "172.29.83.12"]
+    networks:
+      cache:
+        ipv4_address: 172.29.83.12
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  sentinel-1:
+    <<: *sentinel
+    environment:
+      SENTINEL_IP: 172.29.83.21
+    networks:
+      cache:
+        ipv4_address: 172.29.83.21
+  sentinel-2:
+    <<: *sentinel
+    environment:
+      SENTINEL_IP: 172.29.83.22
+    networks:
+      cache:
+        ipv4_address: 172.29.83.22
+  sentinel-3:
+    <<: *sentinel
+    environment:
+      SENTINEL_IP: 172.29.83.23
+    networks:
+      cache:
+        ipv4_address: 172.29.83.23
+
+  flight:
+    <<: *go
+    command: ["/app/flight"]
+    environment:
+      DATABASE_URL: postgres://flight:flight@flight-db:5432/flights?sslmode=disable
+      FLIGHT_API_KEY: ${FLIGHT_API_KEY:-hm3-local-flight-key}
+      REDIS_SENTINELS: 172.29.83.21:26379,172.29.83.22:26379,172.29.83.23:26379
+    networks:
+      default: {}
+      cache: {}
+    depends_on:
+      flight-db:
+        condition: service_healthy
+      sentinel-1:
+        condition: service_started
+      sentinel-2:
+        condition: service_started
+      sentinel-3:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/app/check", "ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+  booking:
+    <<: *go
+    command: ["/app/booking"]
+    ports:
+      - "127.0.0.1:8083:8080"
+    environment:
+      DATABASE_URL: postgres://booking:booking@booking-db:5432/bookings?sslmode=disable
+      FLIGHT_ADDR: flight:50051
+      FLIGHT_API_KEY: ${FLIGHT_API_KEY:-hm3-local-flight-key}
+    depends_on:
+      booking-db:
+        condition: service_healthy
+      flight:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/check", "http"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  flight_data:
+  booking_data:
+
+networks:
+  cache:
+    ipam:
+      config:
+        - subnet: 172.29.83.0/24
