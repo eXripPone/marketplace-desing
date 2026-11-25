@@ -1,0 +1,7 @@
+{
+  "identities": [{
+    "name": "cinema",
+    "credentials": [{"accessKey": "cinema", "secretKey": "cinema-secret"}],
+    "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+  }]
+}

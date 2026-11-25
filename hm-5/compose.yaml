@@ -1,0 +1,167 @@
+name: cinema-hm5
+
+x-app: &app
+  build: .
+  image: cinema-hm5-app
+  restart: unless-stopped
+
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xmx512m -Xms256m
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ['CMD-SHELL', 'kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1']
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.7.1
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 1
+      SCHEMA_REGISTRY_HEAP_OPTS: -Xmx256m -Xms128m
+    depends_on:
+      kafka: {condition: service_healthy}
+    ports: ['127.0.0.1:8085:8081']
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:8081/subjects >/dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_USER: cinema
+      CLICKHOUSE_PASSWORD: cinema
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ['CMD', 'clickhouse-client', '--user', 'cinema', '--password', 'cinema', '--query', 'SELECT 1']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cinema
+      POSTGRES_PASSWORD: cinema
+      POSTGRES_DB: cinema
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cinema -d cinema']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  s3:
+    image: chrislusf/seaweedfs:3.80
+    working_dir: /data
+    command: server -s3 -dir=/data -ip=s3 -ip.bind=0.0.0.0 -volume.max=5 -s3.config=/etc/seaweedfs/s3.json
+    ports: ['127.0.0.1:9005:8888']
+    volumes:
+      - s3_data:/data
+      - ./s3/config.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:8888/']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  producer:
+    <<: *app
+    ports: ['127.0.0.1:8005:8000']
+    depends_on:
+      schema-registry: {condition: service_healthy}
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    <<: *app
+    restart: 'no'
+    command: python -m app.migrate
+    depends_on:
+      producer: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      s3: {condition: service_healthy}
+
+  aggregation:
+    <<: *app
+    command: uvicorn app.aggregate:app --host 0.0.0.0 --port 8000
+    environment:
+      AGG_INTERVAL_SECONDS: ${AGG_INTERVAL_SECONDS:-60}
+    ports: ['127.0.0.1:8006:8000']
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  generator:
+    <<: *app
+    command: python -m app.generate
+    environment:
+      GENERATOR_INTERVAL_SECONDS: ${GENERATOR_INTERVAL_SECONDS:-15}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  grafana:
+    build: ./grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports: ['127.0.0.1:3005:3000']
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:3000/api/health']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  tests:
+    <<: *app
+    restart: 'no'
+    profiles: [test]
+    command: python -m tests.e2e
+    depends_on:
+      aggregation: {condition: service_healthy}
+      grafana: {condition: service_healthy}
+
+volumes:
+  kafka_data:
+  clickhouse_data:
+  postgres_data:
+  s3_data:

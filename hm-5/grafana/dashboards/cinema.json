@@ -1,0 +1,222 @@
+{
+  "uid": "cinema",
+  "title": "Online Cinema",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Retention Cohort Heatmap",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sql",
+          "editorType": "sql",
+          "rawSql": "SELECT day AS Cohort, maxIf(value,metric='retention_d0') AS `Day 0`, maxIf(value,metric='retention_d1') AS `Day 1`, maxIf(value,metric='retention_d2') AS `Day 2`, maxIf(value,metric='retention_d3') AS `Day 3`, maxIf(value,metric='retention_d4') AS `Day 4`, maxIf(value,metric='retention_d5') AS `Day 5`, maxIf(value,metric='retention_d6') AS `Day 6`, maxIf(value,metric='retention_d7') AS `Day 7` FROM cinema.metrics_current WHERE metric LIKE 'retention_d%' OR metric='cohort_size' GROUP BY day HAVING maxIf(value,metric='cohort_size')>0 ORDER BY day DESC LIMIT 30",
+          "format": 1
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^Day [0-7]$"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 2,
+      "title": "DAU",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sql",
+          "editorType": "sql",
+          "rawSql": "SELECT day, value FROM cinema.metrics_current WHERE metric='dau' ORDER BY day DESC LIMIT 30",
+          "format": 1
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 3,
+      "title": "View conversion",
+      "type": "table",
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sql",
+          "editorType": "sql",
+          "rawSql": "SELECT day, value FROM cinema.metrics_current WHERE metric='conversion' ORDER BY day DESC LIMIT 30",
+          "format": 1
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 4,
+      "title": "Average finished watch, seconds",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sql",
+          "editorType": "sql",
+          "rawSql": "SELECT day, value FROM cinema.metrics_current WHERE metric='avg_watch_seconds' ORDER BY day DESC LIMIT 30",
+          "format": 1
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 5,
+      "title": "Top movies by completed views",
+      "type": "table",
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sql",
+          "editorType": "sql",
+          "rawSql": "SELECT day, dimension AS movie, value AS views FROM cinema.metrics_current WHERE metric='movie_views' AND value>0 ORDER BY day DESC, views DESC LIMIT 30",
+          "format": 1
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    }
+  ],
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  }
+}
